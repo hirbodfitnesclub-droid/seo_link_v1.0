@@ -4,13 +4,15 @@
 
 ## اسکیمای دیتابیس (Dexie.js / IndexedDB)
 
-```js
-// src/db.js
-db.version(1).stores({
+```ts
+// src/db.ts
+db.version(2).stores({
   projects : '++id, name, created_at',
   pages    : '++id, project_id, title',
   weights  : '++id, project_id, category_name',
-  results  : '++id, project_id, source_page_id'
+  candidates: '++id, project_id, source_page_id', // جدول جدید: لیست ۲۰ کاندیدا
+  results  : '++id, project_id, source_page_id',
+  analysisQueue: '++id, project_id' // صف پردازش AI
 })
 ```
 
@@ -64,7 +66,7 @@ db.version(1).stores({
 | weight_value | float (1-5) | وزن اختصاص‌داده‌شده |
 
 **وزن‌های پیش‌فرض:**
-```js
+```ts
 {
   'شهر_یا_جزیره_مقصد'   : 5,
   'کشور_مقصد'           : 4,
@@ -87,13 +89,30 @@ db.version(1).stores({
 }
 ```
 
-### جدول `results`
+### جدول `candidates` (جدید — لیست ۲۰ کاندیدای هر صفحه)
+| فیلد | نوع | توضیح |
+|---|---|---|
+| id | auto int PK | |
+| project_id | int FK → projects.id | |
+| source_page_id | int FK → pages.id | صفحه‌ای که کاندیداها برایش محاسبه شده |
+| candidate_list | JSON string | آرایه ۲۰ کاندیدا (بدون AI) |
+| computed_at | ISO string | زمان محاسبه |
+
+**ساختار `candidate_list`:**
+```json
+[
+  { "page_id": 42, "title": "تور مارماریس تابستان", "score": 15, "matched_tags": ["کشور_مقصد", "فصل_برگزاری"] }
+]
+```
+
+### جدول `results` (نتایج نهایی AI)
 | فیلد | نوع | توضیح |
 |---|---|---|
 | id | auto int PK | |
 | project_id | int FK → projects.id | |
 | source_page_id | int FK → pages.id | صفحه‌ای که لینک‌ها برایش پیشنهاد شده |
-| recommended_links | JSON string | آرایه لینک‌های پیشنهادی |
+| recommended_links | JSON string | آرایه لینک‌های پیشنهادی از AI |
+| is_manual_edit | boolean | آیا کاربر دستی ویرایش کرده؟ |
 | generated_at | ISO string | زمان تولید |
 
 **ساختار `recommended_links`:**
@@ -103,16 +122,33 @@ db.version(1).stores({
     "page_id": 42,
     "title": "تور مارماریس تابستان ۱۴۰۵",
     "score": 11,
-    "reason": "هر دو تور ترکیه مدیترانه تابستانه هستند"
+    "reason": "هر دو تور ترکیه مدیترانه تابستانه هستند",
+    "is_manual": false
   }
 ]
 ```
+
+### جدول `analysisQueue` (صف پردازش AI)
+| فیلد | نوع | توضیح |
+|---|---|---|
+| id | auto int PK | |
+| project_id | int FK → projects.id | |
+| status | `'pending'` / `'processing'` / `'completed'` / `'failed'` | وضعیت صف |
+| current_page_index | int | ایندکس آخرین صفحه پردازش‌شده |
+| total_pages | int | تعداد کل صفحات |
+| error_message | string / null | پیام خطا اگر fail شد |
+| started_at | ISO string | زمان شروع |
+| updated_at | ISO string | آخرین به‌روزرسانی |
 
 ---
 
 ## جریان داده (Data Flow)
 
 ```
+                          ┌─────────────────────────────────────────────────────────────┐
+                          │                    User Flow                                 │
+                          └─────────────────────────────────────────────────────────────┘
+
 CSV آپلود
     │
     ▼
@@ -124,123 +160,161 @@ Dexie: projects.add() + pages.bulkAdd()
     ▼
 Config Screen: scoring_mode + weights → Dexie: weights.bulkAdd()
     │
-    ├──► [scorer.js] computeAllCandidates(pages, weights, mode)
-    │         └─► برای هر صفحه: top 20 کاندید بر اساس امتیاز
-    │
-    └──► [gemini.js] buildPrompt(pages, candidates) → fetch Gemini API
-              └─► پارس JSON پاسخ → Dexie: results.bulkAdd()
-                        │
-                        ▼
-                  Results Screen: خواندن از Dexie + نمایش + export
+    ├───────────────────────────────────────────────────────────────────┐
+    │                                                                   │
+    ▼                                                                   ▼
+[مرحله اول: امتیازدهی داخلی - بدون AI]                    [صفحه لیست صفحات]
+    │                                                                   │
+    ▼                                                                   ▼
+scorer.ts → computeAllCandidates()                         کلیک روی هر صفحه
+    │                                                                   │
+    ▼                                                                   ▼
+برای هر صفحه: top 20 کاندیدا                              [صفحه جزئیات صفحه]
+    │                                                         /         \
+    ▼                                                        /           \
+Dexie: candidates.bulkAdd()                                 ▼             ▼
+    │                                                   [دکمه تکی    [ویرایش
+    │                                                    بررسی AI]    دستی]
+    └───────────────────────────────────────────────────────┘
+                                                            │
+                                                            ▼
+                          ┌─────────────────────────────────────────────────────────────┐
+                          │              مرحله دوم: پردازش AI                            │
+                          └─────────────────────────────────────────────────────────────┘
+
+                    ┌───────────────────┐         ┌───────────────────┐
+                    │   دکمه تکی        │         │   دکمه کلی        │
+                    │   (یک صفحه)       │         │   (همه صفحات)     │
+                    └────────┬──────────┘         └────────┬──────────┘
+                             │                             │
+                             ▼                             ▼
+                    فقط همان صفحه +               ایجاد analysisQueue
+                    ۲۰ کاندیدایش                  با status='pending'
+                             │                             │
+                             ▼                             ▼
+                    gemini.ts: buildSinglePrompt()     صف‌پردازی:
+                             │                      ┌──────────────────────────┐
+                             ▼                      │  برای هر صفحه:          │
+                    callGemini()                    │  1. صفحه i را بگیر       │
+                             │                      │  2. ۲۰ کاندیدا بفرست    │
+                             ▼                      │  3. جواب بگیر            │
+                    ذخیره در results                │  4. ذخیره در results     │
+                             │                      │  5. مکث ۲ ثانیه          │
+                             ▼                      │  6. update queue index   │
+                    نمایش نتیجه                     │  7. تکرار تا آخر         │
+                                                    └──────────────────────────┘
+                                                               │
+                                                               ▼
+                                                    اگر خطا یا قطع شد:
+                                                    queue.status = 'failed'
+                                                    queue.error_message = ...
+                                                               │
+                                                               ▼
+                                                    دفعه بعد: از current_page_index ادامه بده
 ```
 
 ---
 
-## درخت فایل (کامل)
+## مسیرهای روتینگ
 
+| مسیر | کامپوننت | توضیح |
+|---|---|---|
+| `/` | `Home.tsx` | لیست پروژه‌ها |
+| `/new` | `NewProject.tsx` | آپلود CSV |
+| `/config/:projectId` | `Config.tsx` | تنظیمات امتیازدهی |
+| `/project/:projectId` | `ProjectPages.tsx` | **جدید:** لیست صفحات پروژه + دکمه تحلیل کلی |
+| `/project/:projectId/page/:pageId` | `PageDetail.tsx` | **جدید:** جزئیات یک صفحه + ویرایش دستی |
+| `/results/:projectId` | `Results.tsx` | خروجی نهایی + export |
+
+---
+
+## درخت فایل (تغییرات جدید)
+
+فایل‌های جدید که باید ساخته شوند:
 ```
-linkmesh/
-├── index.html
-├── vite.config.js
-├── tailwind.config.js
-├── postcss.config.js
-├── package.json
+src/
+├── pages/
+│   ├── ProjectPages.tsx     ← [جدید] لیست صفحات + دکمه تحلیل کلی
+│   └── PageDetail.tsx       ← [جدید] جزئیات صفحه + ویرایش دستی
 │
-├── docs/
-│   ├── PROJECT.md          ← این فایل + برادرانش
-│   ├── ARCHITECTURE.md
-│   └── tasks.md
+├── utils/
+│   ├── scorer.ts            ← [ویرایش] اضافه کردن matched_tags به خروجی
+│   └── gemini.ts            ← [ویرایش] اضافه کردن buildSinglePrompt()
 │
-└── src/
-    ├── main.jsx             ← entry point، RTL و فونت اینجا set می‌شوند
-    ├── App.jsx              ← React Router routes
-    │
-    ├── db.js                ← تعریف کامل Dexie schema
-    │
-    ├── constants/
-    │   └── categories.js    ← آرایه ۱۸ نام ستون + وزن‌های پیش‌فرض
-    │
-    ├── utils/
-    │   ├── csvParser.js     ← Papa Parse wrapper: CSV → آرایه آبجکت
-    │   ├── scorer.js        ← الگوریتم امتیازدهی (خطی/ضریب‌دار)
-    │   └── gemini.js        ← ساخت prompt + فراخوانی API + پارس پاسخ
-    │
-    ├── hooks/
-    │   └── useProject.js    ← hook برای خواندن project فعال از Dexie
-    │
-    ├── components/
-    │   └── ui/
-    │       ├── Button.jsx
-    │       ├── Spinner.jsx
-    │       └── Badge.jsx
-    │
-    └── pages/
-        ├── Home.jsx         ← لیست پروژه‌ها
-        ├── NewProject.jsx   ← آپلود CSV
-        ├── Config.jsx       ← تنظیمات امتیازدهی
-        ├── Analysis.jsx     ← نوار پیشرفت پردازش
-        └── Results.jsx      ← جدول نتایج + export
+├── components/
+│   ├── QueueProgress.tsx    ← [جدید] نمایش پیشرفت صف
+│   └── CandidateCard.tsx    ← [جدید] کارت نمایش کاندیدا
+│
+└── hooks/
+    └── useAnalysisQueue.ts  ← [جدید] مدیریت صف پردازش AI
+```
+
+فایل‌های موجود که ویرایش می‌شوند:
+```
+src/
+├── db.ts                    ← اضافه کردن جداول candidates و analysisQueue
+├── App.tsx                  ← اضافه کردن route‌های جدید
+└── pages/Home.tsx           ← لینک به صفحه ProjectPages
 ```
 
 ---
 
-## منطق الگوریتم امتیازدهی (`scorer.js`)
+## منطق الگوریتم امتیازدهی (`scorer.ts`) — تغییرات
 
-```
-تابع: computeScore(pageA, pageB, weights, mode)
+تابع جدید برای برگرداندن تگ‌های مشترک:
 
-برای هر یک از ۱۸ فیلد دسته‌بندی:
-  اگر مقدار pageA[field] و pageB[field] هر دو غیر null باشند
-  و با هم برابر باشند:
-    اگر mode === 'linear':
-      score += 1
-    اگر mode === 'weighted':
-      score += weights[field]  (پیش‌فرض ۱ اگر weight تعریف نشده)
+```ts
+// تابع جدید
+function getMatchedTags(catA, catB): string[] {
+  const matched: string[] = [];
+  Object.keys(catA).forEach((field) => {
+    if (catA[field] !== null && catB[field] !== null && catA[field] === catB[field]) {
+      matched.push(field);
+    }
+  });
+  return matched;
+}
 
-بازگشت: score
-```
-
-```
-تابع: computeAllCandidates(pages, weights, mode)
-
-برای هر صفحه (source):
-  محاسبه score با تمام صفحات دیگر
-  مرتب‌سازی نزولی
-  نگه‌داشتن top 20
-
-بازگشت: Map<page_id, CandidateList[]>
+// تغییر در findTopCandidates — اضافه کردن matched_tags به خروجی
+interface CandidateWithTags {
+  page_id: number;
+  title: string;
+  score: number;
+  matched_tags: string[]; // فیلد جدید
+}
 ```
 
 ---
 
-## ساختار Prompt برای Gemini
+## ساختار Prompt برای Gemini — تغییرات
+
+### Prompt برای یک صفحه (دکمه تکی):
 
 ```
 SYSTEM:
 تو یک متخصص SEO هستی. وظیفه‌ات انتخاب بهترین لینک‌های داخلی است.
 
 USER:
-در زیر اطلاعات [N] صفحه سایت نهال‌گشت و کاندیداهای پیشنهادی برای
-لینک‌سازی داخلی آورده شده. برای هر صفحه، از بین کاندیداهایش،
-بهترین [max_links] صفحه را برای لینک داخلی انتخاب کن.
+یک صفحه از سایت نهال‌گشت و ۲۰ صفحه کاندیدا برای لینک‌سازی داده شده.
+از بین این ۲۰ کاندیدا، دقیقاً ۵ صفحه برتر را انتخاب کن.
 
 معیار: شباهت معنایی، ارتباط موضوعی، و تکمیل‌کنندگی سفر کاربر.
 
-خروجی را فقط به صورت JSON خالص بده (بدون ```):
-[
-  {
-    "source_title": "...",
-    "links": [
-      { "title": "...", "reason": "..." }
-    ]
-  }
-]
+صفحه اصلی:
+- عنوان: تور مارماریس تابستان ۱۴۰۵
+- ویژگی‌ها: کشور=ترکیه، فصل=تابستان، نوع=تفریحی
 
---- داده صفحات ---
-[لیست کامل صفحات با categories]
+کاندیداها:
+1. تور کوش آداسی تابستان — امتیاز تگ: 15 — تگ‌های مشترک: کشور، فصل
+2. تور آنتالیا بهار — امتیاز تگ: 10 — تگ‌های مشترک: کشور
+...
 
---- کاندیداها ---
-[Map کاندیداها]
+خروجی را فقط به صورت JSON خالص بده:
+{
+  "selected_links": [
+    { "page_id": 42, "title": "...", "reason": "..." }
+  ]
+}
 ```
 
 ---

@@ -1,312 +1,688 @@
-# tasks.md — نقشه راه مرجع
+# tasks.md — نقشه راه مرجع (سیستم جدید بررسی لینک‌ها)
 
 > ترتیب تسک‌ها اجباری است. هر تسک روی خروجی تسک قبلی تکیه دارد.
 > قبل از شروع هر تسک، فایل‌های CONTEXT_FILES را بخوان.
 
 ---
 
-## تسک ۱ — راه‌اندازی پروژه + لایه دیتابیس
+## تسک ۱ — به‌روزرسانی اسکیمای دیتابیس
 
 ### هدف
-پایه‌های پروژه را بچین: ساختار فایل، Tailwind، RTL، فونت، و اسکیمای کامل Dexie.
+اضافه کردن دو جدول جدید به Dexie: `candidates` (برای ذخیره ۲۰ کاندیدای هر صفحه) و `analysisQueue` (برای مدیریت صف پردازش AI).
 
 ### راهنمای پیاده‌سازی فنی
 
-1. پروژه Vite+React بساز. وابستگی‌ها را نصب کن:
-   `dexie`, `react-router-dom`, `papaparse`, `tailwindcss`, `autoprefixer`, `postcss`
+1. **`src/db.ts`**: نسخه دیتابیس را از 1 به 2 تغییر بده و دو جدول جدید اضافه کن:
 
-2. **`tailwind.config.js`**: content را به `./src/**/*.{js,jsx}` بده. هیچ پلاگین اضافی لازم نیست.
+   ```ts
+   // جدول candidates — ۲۰ کاندیدای هر صفحه (قبل از AI)
+   export interface Candidate {
+     id?: number;
+     project_id: number;
+     source_page_id: number;
+     candidate_list: string; // JSON آرایه: [{ page_id, title, score, matched_tags }]
+     computed_at: string;
+   }
 
-3. **`index.html`**: این دو تگ را در `<head>` اضافه کن:
-   ```html
-   <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700&display=swap" rel="stylesheet">
+   // جدول analysisQueue — صف پردازش AI
+   export interface AnalysisQueue {
+     id?: number;
+     project_id: number;
+     status: 'pending' | 'processing' | 'completed' | 'failed' | 'paused';
+     current_page_index: number;
+     total_pages: number;
+     error_message: string | null;
+     started_at: string;
+     updated_at: string;
+   }
    ```
-   و `dir="rtl"` را روی تگ `<html>` بگذار.
 
-4. **`src/main.jsx`**: فقط `App` را رندر کن. هیچ منطقی اینجا نباشد.
-
-5. **`src/constants/categories.js`**: یک آرایه export کن به نام `CATEGORIES` با این ۱۸ آیتم — هر آیتم یک آبجکت `{ name, defaultWeight }`:
+2. اسکیمای Dexie را آپدیت کن:
+   ```ts
+   this.version(2).stores({
+     projects: '++id, name, created_at',
+     pages: '++id, project_id, title',
+     weights: '++id, project_id, category_name',
+     candidates: '++id, project_id, source_page_id',
+     results: '++id, project_id, source_page_id',
+     analysisQueue: '++id, project_id'
+   });
    ```
-   قاره_یا_منطقه (2), کشور_مقصد (4), جهت_در_منطقه (2),
-   شهر_یا_جزیره_مقصد (5), شهر_یا_استان_مبدا (1), نوع_تور (3),
-   فصل_برگزاری (3), ماه_تقویمی_برگزاری (3), تعطیلات_خاص_تقویمی (1),
-   رویداد_یا_مناسبت_خاص (1), تم_یا_هدف_سفر (2), نوع_وسیله_نقلیه (1),
-   نام_دقیق_هتل (1), تعداد_ستاره_هتل (1), برچسب_کلاسی_تور (1),
-   پرسونای_مخاطب (1), وضعیت_ویزا (1), نوع_سفر (2)
-   ```
 
-6. **`src/db.js`**: اسکیمای Dexie را دقیقاً مطابق ARCHITECTURE.md بساز. چهار جدول: `projects`, `pages`, `weights`, `results`. فقط تعریف schema — هیچ منطق اضافی نباشد.
-
-7. **`src/App.jsx`**: چهار route بساز با React Router:
-   - `/` → `<Home />`
-   - `/new` → `<NewProject />`
-   - `/config/:projectId` → `<Config />`
-   - `/results/:projectId` → `<Results />`
-   هر page فعلاً یک `<div>` خالی با نام خودش باشد (placeholder).
-
-8. **`src/components/ui/Button.jsx`**: یک کامپوننت ساده با prop‌های `variant` (primary/secondary/danger) و `loading` (نشان‌دهنده spinner). استایل فقط Tailwind.
-
-9. **`src/components/ui/Spinner.jsx`**: یک دایره چرخان ساده با Tailwind.
+3. فیلد `is_manual_edit` را به interface `Result` اضافه کن.
 
 ### محدودیت‌های این تسک
-- ✅ فقط ساختار و تنظیمات — هیچ منطق بیزینسی نباشد
-- ✅ `db.js` فقط export یک instance از Dexie باشد
-- ⛔ هیچ فراخوانی به Dexie (add/get) در این تسک نیست
-- ⛔ هیچ API call نیست
+- ✅ فقط تغییرات schema — هیچ منطق بیزینسی جدید
+- ✅ از `upgrade()` برای migration استفاده نکن؛ این یک fresh install است
+- ⛔ هیچ کامپوننت UI تغییر نکند
 
-`CONTEXT_FILES: ["docs/PROJECT.md", "docs/ARCHITECTURE.md"]`
+`CONTEXT_FILES: ["Docks/ARCHITECTURE.md", "src/db.ts"]`
 
 ---
 
-## تسک ۲ — صفحه Home + مدیریت پروژه‌ها
+## تسک ۲ — آپدیت موتور امتیازدهی برای نمایش تگ‌های مشترک
 
 ### هدف
-صفحه اصلی که لیست پروژه‌های ذخیره‌شده در Dexie را نشان می‌دهد و ورودی اصلی برنامه است.
+تغییر در `scorer.ts` برای برگرداندن لیست تگ‌های مشترک علاوه بر امتیاز. این اطلاعات به کاربر نشان داده می‌شود و به AI هم برای تحلیل بهتر ارسال می‌شود.
 
 ### راهنمای پیاده‌سازی فنی
 
-1. **`src/pages/Home.jsx`**:
-   - با `useLiveQuery` از Dexie، لیست تمام `projects` را بخوان (مرتب‌شده بر اساس `created_at` نزولی).
-   - اگر پروژه‌ای نیست: یک حالت خالی (empty state) نشان بده با دکمه «پروژه جدید».
-   - اگر پروژه دارد: لیست کارت‌ها نشان بده. هر کارت: نام پروژه، تعداد صفحات، تاریخ ساخت، و سه دکمه:
-     - «مشاهده نتایج» ← navigate به `/results/:id`
-     - «تنظیمات» ← navigate به `/config/:id`
-     - «حذف» ← با confirm dialog، project + pages + weights + results مربوط را از Dexie حذف کن (transaction)
-   - دکمه «+ پروژه جدید» در بالا ← navigate به `/new`
+1. **`src/utils/scorer.ts`**:
 
-2. **`src/hooks/useProject.js`**:
-   یک custom hook بساز که `projectId` را می‌گیرد و این‌ها را برمی‌گرداند:
-   ```js
-   { project, pages, weights, results, loading, error }
+   **تغییر در interface `Candidate`:**
+   ```ts
+   export interface CandidateWithTags {
+     page_id: number;
+     title: string;
+     score: number;
+     matched_tags: string[]; // فیلد جدید — نام تگ‌های مشترک
+   }
    ```
-   از `useLiveQuery` استفاده کن تا هر تغییری در Dexie خودکار re-render کند.
 
-### محدودیت‌های این تسک
-- ✅ تمام داده‌خوانی از Dexie با `useLiveQuery` باشد
-- ✅ حذف پروژه باید transaction باشد (هم‌زمان ۴ جدول پاک شود)
-- ⛔ هیچ state جداگانه‌ای برای data نباشد — Dexie single source of truth است
-- ⛔ هنوز صفحه CSV آپلود ساخته نشده — لینک «پروژه جدید» فقط navigate کند
-
-`CONTEXT_FILES: ["docs/ARCHITECTURE.md", "src/db.js", "src/App.jsx", "src/components/ui/Button.jsx"]`
-
----
-
-## تسک ۳ — صفحه NewProject: آپلود و پارس CSV
-
-### هدف
-کاربر CSV را آپلود می‌کند، پیش‌نمایش می‌بیند، و پروژه در Dexie ذخیره می‌شود.
-
-### راهنمای پیاده‌سازی فنی
-
-1. **`src/utils/csvParser.js`**:
-   یک تابع `parseCSV(file)` بساز که:
-   - با Papa Parse فایل را می‌خواند (`header: true`, `skipEmptyLines: true`)
-   - اعتبارسنجی می‌کند: ستون `عنوان_H1` باید وجود داشته باشد. اگر نبود، error برگردان.
-   - هر ردیف را به این فرمت تبدیل کن:
-     ```js
-     { title: row['عنوان_H1'], categories: JSON.stringify({ /* ۱۸ فیلد */ }) }
-     ```
-     مقادیر خالی (`""`, `undefined`) را `null` کن.
-   - برگردان: `{ rows: [...], totalCount: N, errors: [...] }`
-
-2. **`src/pages/NewProject.jsx`**:
-   - **مرحله A — آپلود**: یک ناحیه drag & drop بساز. فایل input مخفی باشد. کلیک روی ناحیه، input را trigger کند.
-   - **مرحله B — پیش‌نمایش**: بعد از parse، اولین ۵ ردیف را در یک جدول ساده نشان بده. تعداد کل ردیف‌ها را نمایش بده.
-   - **فیلد نام پروژه**: یک input با placeholder «مثلاً: نهال‌گشت آذر ۱۴۰۵».
-   - **دکمه «ذخیره پروژه»**: 
-     - یک `project` در Dexie ذخیره کن (`scoring_mode: 'linear'`, `max_links: 10` پیش‌فرض).
-     - تمام `pages` را با `db.pages.bulkAdd()` در یک عملیات ذخیره کن.
-     - بعد از موفقیت: navigate به `/config/:newProjectId`.
-
-### محدودیت‌های این تسک
-- ✅ `bulkAdd` برای صفحات — هیچ‌گاه loop تک‌تک نباشد
-- ✅ اعتبارسنجی ستون `عنوان_H1` الزامی است
-- ⛔ drag & drop با خود HTML File API پیاده شود — هیچ کتابخانه دیگری نیاز نیست
-- ⛔ هنوز تحلیل AI انجام نشود
-
-`CONTEXT_FILES: ["docs/ARCHITECTURE.md", "src/db.js", "src/constants/categories.js", "src/utils/csvParser.js", "src/components/ui/Button.jsx"]`
-
----
-
-## تسک ۴ — صفحه Config: تنظیمات امتیازدهی
-
-### هدف
-کاربر روش امتیازدهی و وزن دسته‌بندی‌ها را تنظیم می‌کند. این تنظیمات در Dexie ذخیره می‌شوند.
-
-### راهنمای پیاده‌سازی فنی
-
-1. **`src/pages/Config.jsx`**:
-   - با `useProject(projectId)` داده پروژه را بخوان.
-   - بخش ۱ — **روش امتیازدهی**: دو دکمه toggle: «خطی» / «ضریب‌دار». هر بار کلیک، `projects.update(id, { scoring_mode })` صدا بزن.
-   - بخش ۲ — **وزن‌ها** (فقط در حالت «ضریب‌دار» نمایان):
-     - برای هر یک از ۱۸ دسته‌بندی (از `CATEGORIES` constant) یک ردیف بساز:
-       - نام دسته‌بندی (فارسی)
-       - یک slider از ۱ تا ۵
-       - نمایش عدد وزن کنار slider
-     - مقدار اولیه slider: اگر `weights` در Dexie برای این project وجود دارد از آن بخوان، وگرنه `defaultWeight` از constant.
-   - بخش ۳ — **حداکثر لینک**: یک select با گزینه‌های ۵ / ۱۰ / ۱۵. مقدار در `projects.max_links` ذخیره شود.
-   - بخش ۴ — **API Key Gemini**: یک input با type=password. مقدار از `localStorage.getItem('LINKMESH_API_KEY')` بخوان. هر تغییر، `localStorage.setItem` صدا بزن. هرگز در Dexie نباشد.
-   - دکمه **«شروع تحلیل»**: 
-     - اعتبارسنجی: API Key خالی نباشد.
-     - تمام وزن‌ها را با `db.weights.bulkPut()` در Dexie ذخیره کن.
-     - Navigate به `/results/:projectId?analyze=true`.
-
-### محدودیت‌های این تسک
-- ✅ ذخیره وزن‌ها فقط با `bulkPut` (upsert) — نه delete+insert
-- ✅ بخش وزن‌ها فقط با toggle «ضریب‌دار» نمایان شود
-- ⛔ API Key به Dexie نرود — فقط localStorage
-- ⛔ هنوز هیچ فراخوانی به Gemini نشود
-
-`CONTEXT_FILES: ["docs/ARCHITECTURE.md", "src/db.js", "src/constants/categories.js", "src/hooks/useProject.js", "src/components/ui/Button.jsx"]`
-
----
-
-## تسک ۵ — موتور امتیازدهی الگوریتمی
-
-### هدف
-یک ماژول خالص (pure function) که بدون هیچ API call، شباهت صفحات را محاسبه می‌کند و برای هر صفحه top 20 کاندید برمی‌گرداند.
-
-### راهنمای پیاده‌سازی فنی
-
-1. **`src/utils/scorer.js`** — سه تابع export کن:
-
-   **تابع ۱: `computeScore(catA, catB, weights, mode)`**
+   **اضافه کردن تابع جدید `getMatchedTags`:**
+   ```ts
+   // برگرداندن لیست تگ‌هایی که بین دو صفحه مشترک هستند
+   export function getMatchedTags(catA: CategoriesMap, catB: CategoriesMap): string[] {
+     const matched: string[] = [];
+     Object.keys(catA).forEach((field) => {
+       if (catA[field] !== null && catB[field] !== null && catA[field] === catB[field]) {
+         matched.push(field);
+       }
+     });
+     return matched;
+   }
    ```
-   ورودی:
-     catA, catB: آبجکت‌های categories (parse شده از JSON)
-     weights: آبجکت { نام_فیلد: عدد }
+
+   **تغییر در `findTopCandidates`:**
+   - خروجی را از `Candidate[]` به `CandidateWithTags[]` تغییر بده
+   - در map، علاوه بر score، فیلد `matched_tags` را هم با صدا زدن `getMatchedTags` پر کن
+
+   **تغییر در `computeAllCandidates`:**
+   - نوع خروجی Map را به `Map<number, CandidateWithTags[]>` تغییر بده
+
+2. مطمئن شو که توابع موجود به درستی کار می‌کنند و هیچ چیز خراب نشود.
+
+### محدودیت‌های این تسک
+- ✅ توابع قبلی باید همچنان کار کنند (backward compatible)
+- ✅ `matched_tags` باید نام فارسی فیلدها باشد (مثلاً `"کشور_مقصد"`)
+- ⛔ هیچ side effect نباشد
+- ⛔ هیچ import جدید لازم نیست
+
+`CONTEXT_FILES: ["Docks/ARCHITECTURE.md", "src/utils/scorer.ts", "src/constants/categories.ts"]`
+
+---
+
+## تسک ۳ — ساخت تابع ذخیره‌سازی کاندیداها و Route جدید
+
+### هدف
+ساختن یک تابع که امتیازدهی الگوریتمی را اجرا کند و نتایج را در جدول `candidates` ذخیره کند. همچنین اضافه کردن route‌های جدید به App.tsx.
+
+### راهنمای پیاده‌سازی فنی
+
+1. **`src/utils/candidateStorage.ts`** (فایل جدید):
+   ```ts
+   // این تابع برای یک پروژه:
+   // 1. تمام pages را بخوان
+   // 2. computeAllCandidates را صدا بزن
+   // 3. نتایج را در جدول candidates ذخیره کن
+   
+   export async function computeAndStoreCandidates(
+     projectId: number,
+     pages: Page[],
+     weights: Record<string, number>,
      mode: 'linear' | 'weighted'
-   
-   منطق:
-     برای هر فیلد در catA:
-       اگر catA[field] !== null
-       AND catB[field] !== null
-       AND catA[field] === catB[field]:
-         اگر linear: score += 1
-         اگر weighted: score += (weights[field] ?? 1)
-   
-   خروجی: عدد score
+   ): Promise<void> {
+     // کاندیداهای قبلی این پروژه را پاک کن
+     await db.candidates.where('project_id').equals(projectId).delete();
+     
+     // محاسبه کاندیداها
+     const candidatesMap = computeAllCandidates(pages, weights, mode);
+     
+     // آماده‌سازی برای bulk insert
+     const now = new Date().toISOString();
+     const records = Array.from(candidatesMap.entries()).map(([pageId, list]) => ({
+       project_id: projectId,
+       source_page_id: pageId,
+       candidate_list: JSON.stringify(list),
+       computed_at: now
+     }));
+     
+     // ذخیره یکجا
+     await db.candidates.bulkAdd(records);
+   }
    ```
 
-   **تابع ۲: `findTopCandidates(sourceId, allPages, weights, mode, topN = 20)`**
+2. **`src/App.tsx`**: دو route جدید اضافه کن:
+   ```tsx
+   <Route path="/project/:projectId" element={<ProjectPages />} />
+   <Route path="/project/:projectId/page/:pageId" element={<PageDetail />} />
    ```
-   - تمام صفحات به جز sourceId را score بزن
-   - مرتب‌سازی نزولی بر اساس score
-   - برگردان top N آیتم: [{ page_id, title, score }]
+   فعلاً برای کامپوننت‌ها placeholder بگذار (یک div ساده).
+
+3. **`src/pages/ProjectPages.tsx`** (فایل جدید — placeholder):
+   ```tsx
+   export default function ProjectPages() {
+     return <div>صفحه لیست صفحات پروژه — در تسک بعدی ساخته می‌شود</div>;
+   }
    ```
 
-   **تابع ۳: `computeAllCandidates(pages, weights, mode)`**
+4. **`src/pages/PageDetail.tsx`** (فایل جدید — placeholder):
+   ```tsx
+   export default function PageDetail() {
+     return <div>صفحه جزئیات — در تسک بعدی ساخته می‌شود</div>;
+   }
    ```
-   - برای هر صفحه: findTopCandidates را صدا بزن
-   - برگردان: Map که کلیدش page_id و مقدارش آرایه کاندیداهاست
-   - categories در هر page قبلاً JSON.parse شده باشد
-   ```
-
-2. این ماژول هیچ import از React یا Dexie ندارد. فقط محاسبات ریاضی خالص.
 
 ### محدودیت‌های این تسک
-- ✅ هر سه تابع باید `export` باشند (برای تست‌پذیری)
-- ✅ مقادیر `null` در هر دو طرف → آن فیلد نادیده گرفته می‌شود
-- ⛔ هیچ side effect — نه Dexie، نه localStorage، نه console.log در production
-- ⛔ از `.map().filter().sort()` استفاده کن — از for loop تودرتو اجتناب کن
+- ✅ تابع `computeAndStoreCandidates` باید transaction-safe باشد
+- ✅ قبل از insert، رکوردهای قبلی پاک شوند
+- ⛔ هنوز UI نمایش کاندیداها ساخته نشود
 
-`CONTEXT_FILES: ["docs/ARCHITECTURE.md", "src/constants/categories.js"]`
+`CONTEXT_FILES: ["Docks/ARCHITECTURE.md", "src/db.ts", "src/utils/scorer.ts", "src/App.tsx"]`
 
 ---
 
-## تسک ۶ — Gemini Integration + صفحه Analysis
+## تسک ۴ — صفحه لیست صفحات پروژه (ProjectPages)
 
 ### هدف
-ساخت ماژول فراخوانی Gemini و صفحه‌ای که روند تحلیل را به کاربر نشان می‌دهد.
+ساختن صفحه‌ای که تمام صفحات یک پروژه را نشان می‌دهد. هر صفحه قابل کلیک است. دکمه «تحلیل هوشمند همه صفحات» در بالا قرار دارد.
+
+### یوزر فلو
+1. کاربر از صفحه Home روی پروژه کلیک می‌کند و به این صفحه می‌رسد
+2. می‌بیند: لیست تمام صفحات، وضعیت هر صفحه (تحلیل‌شده/نشده)، دکمه تحلیل کلی
+3. می‌تواند روی هر صفحه کلیک کند تا به PageDetail برود
+4. می‌تواند دکمه «تحلیل هوشمند همه صفحات» را بزند
 
 ### راهنمای پیاده‌سازی فنی
 
-1. **`src/utils/gemini.js`** — دو تابع export کن:
+1. **`src/pages/ProjectPages.tsx`**:
+   
+   **Header:**
+   - نام پروژه
+   - دکمه «تحلیل هوشمند همه صفحات» (با آیکون Brain یا Sparkles)
+   - دکمه «مشاهده نتایج نهایی» (لینک به Results)
+   - دکمه «تنظیمات» (لینک به Config)
 
-   **تابع ۱: `buildPrompt(pages, candidatesMap, maxLinks)`**
-   ```
-   - یک string ساختار‌یافته بساز که شامل:
-     * توضیح وظیفه به فارسی (ر. ARCHITECTURE.md بخش Prompt)
-     * لیست تمام صفحات با categories‌شان (به شکل خوانا)
-     * لیست کاندیداهای هر صفحه
-     * دستور خروجی JSON
-   - برگردان: string prompt
+   **بخش وضعیت:**
+   - اگر `analysisQueue` برای این پروژه وجود دارد و status=processing:
+     - نمایش نوار پیشرفت: `current_page_index / total_pages`
+     - دکمه «توقف موقت»
+   - اگر status=paused:
+     - نمایش «پردازش متوقف شده» + دکمه «ادامه»
+   - اگر status=failed:
+     - نمایش پیام خطا + دکمه «تلاش مجدد از ادامه»
+
+   **لیست صفحات:**
+   - یک جدول یا گرید از کارت‌ها
+   - هر آیتم: عنوان صفحه، تعداد کاندیدا، وضعیت (آیکون چک اگر result دارد)
+   - کلیک روی هر آیتم: navigate به `/project/:projectId/page/:pageId`
+
+   **جستجو:**
+   - یک input برای فیلتر کردن صفحات بر اساس عنوان
+
+2. **داده‌خوانی:**
+   ```ts
+   const pages = useLiveQuery(() => db.pages.where('project_id').equals(projectId).toArray());
+   const results = useLiveQuery(() => db.results.where('project_id').equals(projectId).toArray());
+   const queue = useLiveQuery(() => db.analysisQueue.where('project_id').equals(projectId).first());
    ```
 
-   **تابع ۲: `callGemini(prompt, apiKey)`**
-   ```
-   - endpoint: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={apiKey}
-   - method: POST, Content-Type: application/json
-   - body: { contents: [{ parts: [{ text: prompt }] }] }
-   - پاسخ را دریافت کن، text را استخراج کن
-   - JSON.parse کن (اگر با ``` شروع شد، آن را strip کن)
-   - اگر parse شکست خورد: error بنداز با پیام «پاسخ Gemini قابل پارس نبود»
-   - برگردان: آرایه پارس‌شده
-   ```
-
-2. **`src/pages/Results.jsx`** — این صفحه هم analysis را مدیریت می‌کند:
-   - اگر query param `?analyze=true` بود، تحلیل را شروع کن:
-     - مرحله ۱: داده‌ها را از Dexie بخوان (pages, weights)
-     - مرحله ۲: `computeAllCandidates` را اجرا کن (نمایش: «در حال امتیازدهی...»)
-     - مرحله ۳: `buildPrompt` بساز
-     - مرحله ۴: `callGemini` صدا بزن (نمایش: «در حال تحلیل با هوش مصنوعی...»)
-     - مرحله ۵: نتایج را به `results` در Dexie با `bulkAdd` بنویس
-     - مرحله ۶: پارامتر `?analyze=true` را از URL حذف کن (بدون navigate)
-   - اگر analyze نبود: مستقیم نتایج موجود را از Dexie بخوان و نشان بده.
-   - **نمایش خطا**: اگر API Key نبود یا Gemini خطا داد، یک banner قرمز نشان بده با دکمه «رفتن به تنظیمات».
+3. **منطق دکمه «تحلیل هوشمند همه صفحات»:**
+   - اگر queue وجود ندارد یا status=completed/failed: یک queue جدید بساز و navigate به حالت پردازش
+   - این دکمه فقط queue را می‌سازد — پردازش واقعی در تسک بعدی پیاده می‌شود
 
 ### محدودیت‌های این تسک
-- ✅ فقط یک call به Gemini — نه loop، نه retry خودکار
-- ✅ نتایج با `bulkAdd` یک‌جا نوشته شوند
-- ⛔ هیچ‌گاه API Key وارد body prompt نشود
-- ⛔ اگر `results` از قبل در Dexie برای این project وجود دارد، قبل از bulkAdd آن‌ها را پاک کن (`db.results.where('project_id').equals(id).delete()`)
+- ✅ از `useLiveQuery` برای reactive data استفاده کن
+- ✅ UI باید responsive باشد (موبایل و دسکتاپ)
+- ⛔ پردازش واقعی AI در این تسک پیاده نمی‌شود — فقط UI
+- ⛔ دکمه تحلیل کلی فقط queue بسازد، نه اجرا
 
-`CONTEXT_FILES: ["docs/ARCHITECTURE.md", "src/db.js", "src/utils/scorer.js", "src/hooks/useProject.js", "src/components/ui/Spinner.jsx", "src/components/ui/Button.jsx"]`
+`CONTEXT_FILES: ["Docks/ARCHITECTURE.md", "src/db.ts", "src/hooks/useProject.ts", "src/pages/Home.tsx", "src/components/ui/Button.tsx"]`
 
 ---
 
-## تسک ۷ — صفحه Results: نمایش + Export
+## تسک ۵ — صفحه جزئیات صفحه (PageDetail)
 
 ### هدف
-نمایش خروجی نهایی به صورت جدولی جستجوپذیر با قابلیت export.
+ساختن صفحه‌ای که جزئیات یک صفحه خاص را نشان می‌دهد: اطلاعات صفحه، ۲۰ کاندیدا، لینک‌های انتخاب‌شده، و امکان ویرایش دستی.
+
+### یوزر فلو
+1. کاربر از ProjectPages روی یک صفحه کلیک می‌کند
+2. می‌بیند: اطلاعات صفحه، لیست ۲۰ کاندیدا، لینک‌های پیشنهادی AI (اگر وجود دارد)
+3. می‌تواند دکمه «بررسی با هوش مصنوعی» را بزند (فقط این صفحه)
+4. می‌تواند لینک‌ها را دستی ویرایش کند: اضافه، حذف، تغییر اولویت
 
 ### راهنمای پیاده‌سازی فنی
 
-1. **`src/pages/Results.jsx`** (تکمیل بخش نمایش):
-   - داده را از Dexie بخوان: `results` join شده با `pages` (با page_id).
-   - **بخش بالا — آمار**: سه کارت: «تعداد صفحات تحلیل‌شده»، «میانگین لینک پیشنهادی»، «تاریخ آخرین تحلیل».
-   - **جستجو**: یک input که `results` را بر اساس `source_title` فیلتر کند (client-side، بدون API).
-   - **جدول نتایج**: هر ردیف شامل:
-     - عنوان صفحه منبع
-     - تعداد لینک پیشنهادی
-     - دکمه «نمایش» که ردیف را expand کند
-     - در expand: لیست لینک‌ها با عنوان + دلیل (reason از AI)
-   - **دکمه «دانلود CSV»**:
-     ```
-     هر ردیف CSV: source_title | link_title | reason
-     ```
-     با `Blob` و `URL.createObjectURL` دانلود کن.
-   - **دکمه «تحلیل مجدد»**: navigate به `/config/:projectId`.
-   - **دکمه «بازگشت به خانه»**: navigate به `/`.
+1. **`src/pages/PageDetail.tsx`**:
 
-2. **`src/components/ui/Badge.jsx`**: یک pill کوچک برای نشان دادن تعداد لینک‌ها.
+   **Header:**
+   - breadcrumb: نام پروژه > نام صفحه
+   - دکمه «برگشت به لیست»
+   - دکمه «بررسی با هوش مصنوعی» (فقط این صفحه)
+
+   **بخش اطلاعات صفحه:**
+   - عنوان صفحه (H1)
+   - جدول تگ‌ها: نمایش ۱۸ فیلد دسته‌بندی که مقدار غیرnull دارند
+   - نمایش زیبا با Badge برای هر تگ
+
+   **بخش کاندیداها (۲۰ صفحه مشابه):**
+   - عنوان: «صفحات مشابه (امتیازدهی الگوریتمی)»
+   - لیست ۲۰ کاندیدا از جدول `candidates`
+   - هر آیتم: عنوان، امتیاز، تگ‌های مشترک (به شکل Badge)
+   - **قابلیت انتخاب دستی:** چک‌باکس کنار هر کاندیدا برای اضافه کردن به لینک‌های نهایی
+
+   **بخش لینک‌های پیشنهادی (نتیجه AI یا دستی):**
+   - عنوان: «لینک‌های انتخاب‌شده»
+   - اگر result برای این صفحه وجود دارد: نمایش لینک‌ها با reason
+   - اگر نه: «هنوز تحلیل نشده»
+   - **قابلیت ویرایش:**
+     - drag & drop برای تغییر اولویت
+     - دکمه حذف برای هر لینک
+     - اضافه کردن از لیست کاندیداها با چک‌باکس
+   - دکمه «ذخیره تغییرات» که `is_manual_edit: true` ست می‌کند
+
+2. **داده‌خوانی:**
+   ```ts
+   const page = useLiveQuery(() => db.pages.get(pageId));
+   const candidate = useLiveQuery(() => db.candidates.where('source_page_id').equals(pageId).first());
+   const result = useLiveQuery(() => db.results.where('source_page_id').equals(pageId).first());
+   ```
+
+3. **منطق دکمه «بررسی با هوش مصنوعی»:**
+   - این دکمه فقط این یک صفحه را بررسی می‌کند (نه کل پروژه)
+   - در تسک بعدی پیاده‌سازی می‌شود — فعلاً placeholder
 
 ### محدودیت‌های این تسک
-- ✅ جستجو client-side باشد (روی داده از Dexie، نه query جدید)
-- ✅ expand/collapse با React state ساده (نه کتابخانه accordion)
-- ⛔ هیچ API call در این تسک
-- ⛔ هیچ کتابخانه export اضافه نشود — فقط Blob native
+- ✅ ویرایش دستی باید `is_manual_edit: true` بگذارد
+- ✅ UI برای drag & drop می‌تواند ساده باشد (دکمه بالا/پایین کافی است)
+- ⛔ پردازش AI در این تسک پیاده نمی‌شود
+- ⛔ از کتابخانه drag & drop استفاده نکن — دستی پیاده کن
 
-`CONTEXT_FILES: ["docs/ARCHITECTURE.md", "src/db.js", "src/hooks/useProject.js", "src/components/ui/Button.jsx", "src/components/ui/Badge.jsx", "src/components/ui/Spinner.jsx"]`
+`CONTEXT_FILES: ["Docks/ARCHITECTURE.md", "src/db.ts", "src/pages/ProjectPages.tsx", "src/components/ui/Badge.tsx", "src/components/ui/Button.tsx"]`
 
 ---
 
-## چک‌لیست نهایی (بعد از تمام تسک‌ها)
+## تسک ۶ — پردازش AI تکی (یک صفحه)
 
-- [ ] تمام متن‌های UI فارسی هستند
-- [ ] `dir="rtl"` روی `<html>` فعال است
-- [ ] هیچ API Key در Dexie ذخیره نشده
-- [ ] هیچ `console.log` در کد production نیست
-- [ ] همه bulk operations از `bulkAdd`/`bulkPut` استفاده کرده‌اند
-- [ ] صفحه Results با `?analyze=true` تحلیل را شروع می‌کند، بدون آن نتایج را نشان می‌دهد
-- [ ] مدل Gemini دقیقاً `gemini-3.1-flash-lite` است
+### هدف
+پیاده‌سازی منطق دکمه «بررسی با هوش مصنوعی» که فقط یک صفحه و ۲۰ کاندیدایش را به AI می‌فرستد.
+
+### راهنمای پیاده‌سازی فنی
+
+1. **`src/utils/gemini.ts`** — اضافه کردن تابع جدید:
+
+   **تابع `buildSinglePagePrompt`:**
+   ```ts
+   export function buildSinglePagePrompt(
+     sourcePage: { title: string; categories: object },
+     candidates: CandidateWithTags[],
+     maxLinks: number
+   ): string {
+     // پرامپت مخصوص یک صفحه
+     return `
+   SYSTEM:
+   تو یک متخصص SEO هستی. وظیفه‌ات انتخاب بهترین لینک‌های داخلی است.
+
+   USER:
+   یک صفحه از سایت و ${candidates.length} صفحه کاندیدا برای لینک‌سازی داده شده.
+   از بین کاندیداها، دقیقاً ${maxLinks} صفحه برتر را انتخاب کن.
+
+   معیار: شباهت معنایی، ارتباط موضوعی، و تکمیل‌کنندگی سفر کاربر.
+
+   صفحه اصلی:
+   - عنوان: ${sourcePage.title}
+   - ویژگی‌ها: ${JSON.stringify(sourcePage.categories)}
+
+   کاندیداها:
+   ${candidates.map((c, i) => `${i + 1}. ${c.title} — امتیاز: ${c.score} — تگ‌های مشترک: ${c.matched_tags.join(', ')}`).join('\n')}
+
+   خروجی را فقط به صورت JSON خالص بده (بدون markdown):
+   {
+     "selected_links": [
+       { "page_id": 42, "title": "...", "reason": "..." }
+     ]
+   }
+     `;
+   }
+   ```
+
+2. **`src/pages/PageDetail.tsx`** — پیاده‌سازی دکمه AI:
+   ```ts
+   const handleAIAnalysis = async () => {
+     setLoading(true);
+     setError(null);
+     
+     try {
+       const apiKey = localStorage.getItem('LINKMESH_API_KEY');
+       if (!apiKey) throw new Error('کلید API وارد نشده است.');
+       
+       // گرفتن کاندیداها
+       const candidateRecord = await db.candidates.where('source_page_id').equals(pageId).first();
+       if (!candidateRecord) throw new Error('ابتدا امتیازدهی الگوریتمی انجام دهید.');
+       
+       const candidateList = JSON.parse(candidateRecord.candidate_list);
+       const categories = JSON.parse(page.categories);
+       
+       // ساخت پرامپت
+       const prompt = buildSinglePagePrompt({ title: page.title, categories }, candidateList, project.max_links);
+       
+       // فراخوانی AI
+       const response = await callGemini(prompt, apiKey);
+       
+       // ذخیره نتیجه
+       await db.results.where('source_page_id').equals(pageId).delete();
+       await db.results.add({
+         project_id: projectId,
+         source_page_id: pageId,
+         recommended_links: JSON.stringify(response.selected_links),
+         is_manual_edit: false,
+         generated_at: new Date().toISOString()
+       });
+       
+     } catch (err) {
+       setError(err.message);
+     } finally {
+       setLoading(false);
+     }
+   };
+   ```
+
+### محدودیت‌های این تسک
+- ✅ فقط یک صفحه + کاندیداهایش ارسال می‌شود
+- ✅ نتیجه بلافاصله در `results` ذخیره می‌شود
+- ✅ قبل از ذخیره، result قبلی این صفحه پاک شود
+- ⛔ اگر API Key نبود، پیام خطا نشان بده
+
+`CONTEXT_FILES: ["Docks/ARCHITECTURE.md", "src/utils/gemini.ts", "src/pages/PageDetail.tsx", "src/db.ts"]`
+
+---
+
+## تسک ۷ — سیستم صف پردازش AI (تحلیل کلی)
+
+### هدف
+پیاده‌سازی سیستم صفی که صفحات را یکی‌یکی به AI می‌فرستد، نتیجه هر کدام را فوراً ذخیره می‌کند، و در صورت قطع شدن، از همان جا ادامه می‌دهد.
+
+### قوانین حیاتی
+1. **هرگز همه صفحات یکجا ارسال نشوند** — فقط یک صفحه در هر call
+2. **ذخیره دانه‌به‌دانه** — بلافاصله بعد از دریافت جواب هر صفحه، در Dexie ذخیره شود
+3. **مکث بین درخواست‌ها** — ۲ ثانیه بین هر call (برای جلوگیری از rate limit)
+4. **قابلیت resume** — اگر وسط کار قطع شد، از آخرین index ادامه دهد
+
+### راهنمای پیاده‌سازی فنی
+
+1. **`src/hooks/useAnalysisQueue.ts`** (فایل جدید):
+   ```ts
+   export function useAnalysisQueue(projectId: number) {
+     const queue = useLiveQuery(() => db.analysisQueue.where('project_id').equals(projectId).first());
+     
+     // شروع پردازش جدید
+     const startQueue = async (totalPages: number) => {
+       // پاک کردن queue قبلی
+       await db.analysisQueue.where('project_id').equals(projectId).delete();
+       
+       // ساخت queue جدید
+       await db.analysisQueue.add({
+         project_id: projectId,
+         status: 'pending',
+         current_page_index: 0,
+         total_pages: totalPages,
+         error_message: null,
+         started_at: new Date().toISOString(),
+         updated_at: new Date().toISOString()
+       });
+     };
+     
+     // ادامه پردازش متوقف‌شده
+     const resumeQueue = async () => { ... };
+     
+     // توقف موقت
+     const pauseQueue = async () => { ... };
+     
+     return { queue, startQueue, resumeQueue, pauseQueue };
+   }
+   ```
+
+2. **`src/utils/queueProcessor.ts`** (فایل جدید):
+   ```ts
+   export async function processQueue(projectId: number) {
+     const apiKey = localStorage.getItem('LINKMESH_API_KEY');
+     if (!apiKey) throw new Error('کلید API وارد نشده است.');
+     
+     const queue = await db.analysisQueue.where('project_id').equals(projectId).first();
+     if (!queue || queue.status === 'completed') return;
+     
+     // آپدیت status به processing
+     await db.analysisQueue.update(queue.id!, { status: 'processing' });
+     
+     const pages = await db.pages.where('project_id').equals(projectId).toArray();
+     const project = await db.projects.get(projectId);
+     
+     // شروع از current_page_index
+     for (let i = queue.current_page_index; i < pages.length; i++) {
+       // چک کردن آیا pause شده
+       const currentQueue = await db.analysisQueue.get(queue.id!);
+       if (currentQueue?.status === 'paused') break;
+       
+       const page = pages[i];
+       
+       try {
+         // گرفتن کاندیداها
+         const candidateRecord = await db.candidates.where('source_page_id').equals(page.id!).first();
+         if (!candidateRecord) continue;
+         
+         const candidateList = JSON.parse(candidateRecord.candidate_list);
+         const categories = JSON.parse(page.categories);
+         
+         // ساخت پرامپت
+         const prompt = buildSinglePagePrompt({ title: page.title, categories }, candidateList, project!.max_links);
+         
+         // فراخوانی AI
+         const response = await callGemini(prompt, apiKey);
+         
+         // ذخیره فوری
+         await db.transaction('rw', db.results, db.analysisQueue, async () => {
+           await db.results.where('source_page_id').equals(page.id!).delete();
+           await db.results.add({
+             project_id: projectId,
+             source_page_id: page.id!,
+             recommended_links: JSON.stringify(response.selected_links || []),
+             is_manual_edit: false,
+             generated_at: new Date().toISOString()
+           });
+           
+           // آپدیت index
+           await db.analysisQueue.update(queue.id!, {
+             current_page_index: i + 1,
+             updated_at: new Date().toISOString()
+           });
+         });
+         
+         // مکث ۲ ثانیه
+         await new Promise(resolve => setTimeout(resolve, 2000));
+         
+       } catch (err) {
+         // ذخیره خطا و توقف
+         await db.analysisQueue.update(queue.id!, {
+           status: 'failed',
+           error_message: err.message,
+           updated_at: new Date().toISOString()
+         });
+         throw err;
+       }
+     }
+     
+     // تکمیل موفق
+     await db.analysisQueue.update(queue.id!, {
+       status: 'completed',
+       updated_at: new Date().toISOString()
+     });
+   }
+   ```
+
+3. **`src/components/QueueProgress.tsx`** (فایل جدید):
+   - نوار پیشرفت visual
+   - نمایش: «صفحه ۱۵ از ۱۲۰ در حال پردازش...»
+   - دکمه‌های pause/resume/retry
+
+### محدودیت‌های این تسک
+- ✅ ذخیره بعد از هر صفحه — نه در انتها
+- ✅ مکث ۲ ثانیه بین هر call
+- ✅ از transaction برای ذخیره atomic استفاده کن
+- ⛔ هرگز بیش از یک صفحه در هر call نفرستی
+- ⛔ queue processor باید در یک useEffect اجرا شود، نه background worker
+
+`CONTEXT_FILES: ["Docks/ARCHITECTURE.md", "src/db.ts", "src/utils/gemini.ts", "src/pages/ProjectPages.tsx"]`
+
+---
+
+## تسک ۸ — اتصال کامپوننت‌های UI به سیستم صف
+
+### هدف
+اتصال صفحه ProjectPages به سیستم صف: نمایش پیشرفت، دکمه‌های کنترل، و اجرای پردازش.
+
+### راهنمای پیاده‌سازی فنی
+
+1. **`src/pages/ProjectPages.tsx`**:
+   
+   **اضافه کردن state و logic:**
+   ```ts
+   const { queue, startQueue, pauseQueue, resumeQueue } = useAnalysisQueue(projectId);
+   const [isProcessing, setIsProcessing] = useState(false);
+   
+   // اجرای پردازش
+   useEffect(() => {
+     if (queue?.status === 'pending' || queue?.status === 'processing') {
+       setIsProcessing(true);
+       processQueue(projectId)
+         .catch(console.error)
+         .finally(() => setIsProcessing(false));
+     }
+   }, [queue?.status]);
+   ```
+
+   **دکمه «تحلیل هوشمند همه صفحات»:**
+   ```tsx
+   <Button
+     onClick={async () => {
+       // اول امتیازدهی الگوریتمی
+       await computeAndStoreCandidates(projectId, pages, weightsRecord, project.scoring_mode);
+       // شروع صف
+       await startQueue(pages.length);
+     }}
+     disabled={isProcessing}
+   >
+     {isProcessing ? 'در حال پردازش...' : 'تحلیل هوشمند همه صفحات'}
+   </Button>
+   ```
+
+   **بخش نمایش پیشرفت:**
+   ```tsx
+   {queue && queue.status !== 'completed' && (
+     <QueueProgress
+       current={queue.current_page_index}
+       total={queue.total_pages}
+       status={queue.status}
+       error={queue.error_message}
+       onPause={pauseQueue}
+       onResume={resumeQueue}
+     />
+   )}
+   ```
+
+2. **آپدیت کردن وضعیت هر صفحه در لیست:**
+   - اگر برای آن صفحه result وجود دارد: آیکون چک سبز
+   - اگر در حال پردازش است (index فعلی): آیکون spinner
+   - اگر هنوز نشده: بدون آیکون
+
+### محدودیت‌های این تسک
+- ✅ پردازش در useEffect باشد
+- ✅ UI باید real-time آپدیت شود (با useLiveQuery)
+- ⛔ پردازش نباید صفحه را block کند
+- ⛔ اگر کاربر صفحه را ببندد و برگردد، باید وضعیت درست نمایش داده شود
+
+`CONTEXT_FILES: ["Docks/ARCHITECTURE.md", "src/pages/ProjectPages.tsx", "src/hooks/useAnalysisQueue.ts", "src/utils/queueProcessor.ts", "src/components/QueueProgress.tsx"]`
+
+---
+
+## تسک ۹ — آپدیت صفحات Home و Results
+
+### هدف
+آپدیت کردن صفحات موجود برای کار با سیستم جدید: تغییر لینک‌ها، نمایش وضعیت پردازش، و اطمینان از یکپارچگی UX.
+
+### راهنمای پیاده‌سازی فنی
+
+1. **`src/pages/Home.tsx`**:
+   - تغییر دکمه «مشاهده نتایج»: ابتدا به `/project/:id` برود (لیست صفحات)
+   - اضافه کردن نمایش وضعیت پردازش اگر queue فعال است
+   - اضافه کردن لینک مستقیم به Results (خروجی نهایی)
+
+2. **`src/pages/Results.tsx`**:
+   - حذف منطق `?analyze=true` — تحلیل در صفحه جدید انجام می‌شود
+   - این صفحه فقط نمایش نتایج نهایی است
+   - اضافه کردن لینک برگشت به ProjectPages
+
+3. **`src/pages/Config.tsx`**:
+   - تغییر دکمه «شروع تحلیل»: به جای Results، به ProjectPages برود
+   - اضافه کردن دکمه «محاسبه کاندیداها» (اجرای امتیازدهی الگوریتمی)
+
+4. **`src/App.tsx` — Sidebar**:
+   - بررسی و اطمینان از درست بودن لینک‌ها
+
+### محدودیت‌های این تسک
+- ✅ UX باید روان و قابل فهم باشد
+- ✅ کاربر نباید گیج شود بین صفحات مختلف
+- ⛔ منطق پردازش AI از Results حذف شود
+
+`CONTEXT_FILES: ["Docks/ARCHITECTURE.md", "src/pages/Home.tsx", "src/pages/Results.tsx", "src/pages/Config.tsx", "src/App.tsx"]`
+
+---
+
+## تسک ۱۰ — تست نهایی و رفع باگ
+
+### هدف
+تست کامل سیستم جدید و اطمینان از عملکرد صحیح تمام قسمت‌ها.
+
+### چک‌لیست تست
+
+**فلوی اصلی:**
+- [ ] آپلود CSV و ساخت پروژه جدید
+- [ ] تنظیم وزن‌ها و ذخیره
+- [ ] محاسبه کاندیداها (امتیازدهی الگوریتمی)
+- [ ] مشاهده لیست صفحات و کاندیداهای هر کدام
+- [ ] تحلیل تکی یک صفحه با AI
+- [ ] تحلیل کلی همه صفحات با صف
+- [ ] توقف و ادامه دادن صف
+- [ ] ویرایش دستی لینک‌های یک صفحه
+- [ ] مشاهده نتایج نهایی
+- [ ] Export به CSV
+
+**سناریوهای edge-case:**
+- [ ] قطع شدن اینترنت وسط پردازش
+- [ ] تمام شدن توکن API وسط پردازش
+- [ ] پروژه بدون هیچ result
+- [ ] صفحه بدون هیچ کاندیدای مشابه (تمام تگ‌ها null)
+
+**عملکرد:**
+- [ ] پردازش ۱۰۰ صفحه بدون هنگ کردن UI
+- [ ] صف به درستی resume می‌شود
+
+### محدودیت‌های این تسک
+- ✅ تمام console.log‌های debug حذف شوند
+- ✅ تمام متن‌های UI فارسی باشند
+- ⛔ هیچ تغییر ساختاری جدید — فقط رفع باگ
+
+`CONTEXT_FILES: ["Docks/PROJECT.md", "Docks/ARCHITECTURE.md", "src/App.tsx"]`
+
+---
+
+## خلاصه تغییرات نسبت به سیستم قبلی
+
+| قبلی | جدید |
+|---|---|
+| همه صفحات یکجا به AI | صفحه‌به‌صفحه با صف |
+| ذخیره در انتها | ذخیره دانه‌به‌دانه |
+| بدون قابلیت resume | از همان جا ادامه |
+| بدون ویرایش دستی | ویرایش دستی کامل |
+| یک صفحه Results | صفحه جزئیات هر صفحه |
+| بدون نمایش تگ مشترک | نمایش تگ‌های مشترک |
