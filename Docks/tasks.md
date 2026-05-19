@@ -316,17 +316,19 @@
    ```ts
    export function buildSinglePagePrompt(
      sourcePage: { title: string; categories: object },
-     candidates: CandidateWithTags[],
-     maxLinks: number
+     candidates: CandidateWithTags[]
    ): string {
-     // پرامپت مخصوص یک صفحه
+     // پرامپت مخصوص یک صفحه — بدون محدودیت تعداد
      return `
    SYSTEM:
    تو یک متخصص SEO هستی. وظیفه‌ات انتخاب بهترین لینک‌های داخلی است.
 
    USER:
    یک صفحه از سایت و ${candidates.length} صفحه کاندیدا برای لینک‌سازی داده شده.
-   از بین کاندیداها، دقیقاً ${maxLinks} صفحه برتر را انتخاب کن.
+   از بین کاندیداها، **هر صفحه‌ای که واقعاً از نظر معنایی مرتبط است را انتخاب کن**.
+   تعداد مهم نیست — فقط کیفیت و ارتباط واقعی مهم است.
+   اگر همه ۲۰ کاندیدا مرتبط هستند، همه را انتخاب کن.
+   اگر فقط ۳ تا مرتبط هستند، فقط ۳ تا را انتخاب کن.
 
    معیار: شباهت معنایی، ارتباط موضوعی، و تکمیل‌کنندگی سفر کاربر.
 
@@ -364,8 +366,8 @@
        const candidateList = JSON.parse(candidateRecord.candidate_list);
        const categories = JSON.parse(page.categories);
        
-       // ساخت پرامپت
-       const prompt = buildSinglePagePrompt({ title: page.title, categories }, candidateList, project.max_links);
+       // ساخت پرامپت — بدون محدودیت تعداد
+       const prompt = buildSinglePagePrompt({ title: page.title, categories }, candidateList);
        
        // فراخوانی AI
        const response = await callGemini(prompt, apiKey);
@@ -474,8 +476,8 @@
          const candidateList = JSON.parse(candidateRecord.candidate_list);
          const categories = JSON.parse(page.categories);
          
-         // ساخت پرامپت
-         const prompt = buildSinglePagePrompt({ title: page.title, categories }, candidateList, project!.max_links);
+         // ساخت پرامپت — بدون محدودیت تعداد
+         const prompt = buildSinglePagePrompt({ title: page.title, categories }, candidateList);
          
          // فراخوانی AI
          const response = await callGemini(prompt, apiKey);
